@@ -1,0 +1,938 @@
+m{
+  "plan_id": "mcp-task-manager-ai-supported-build-plan",
+  "schema_version": "1.0.0",
+  "generated_date": "2026-05-01",
+  "status": "implementation_plan_only",
+  "execution_policy": {
+    "mode": "sequential_with_manual_approval",
+    "approval_rule": "After each step, stop execution and ask the reviewer to approve before starting the next step.",
+    "determinism_rule": "Do not change stack, file names, ports, API header name, or command names unless an approval gate explicitly requests a change.",
+    "secret_rule": "Never commit real API keys. Use .env locally and .env.example in version control. All examples use placeholder values."
+  },
+  "fixed_decisions": {
+    "domain": "Task Manager",
+    "backend_language": "Python",
+    "backend_framework": "FastAPI",
+    "storage": "SQLite via SQLModel",
+    "mcp_language": "Python",
+    "mcp_framework": "FastMCP from the official MCP Python SDK",
+    "mcp_transport_for_development": "stdio",
+    "mcp_transport_optional_http": "streamable-http may be added only after the stdio version passes Inspector validation",
+    "package_manager": "uv",
+    "test_runner": "pytest",
+    "formatter": "black",
+    "linter": "ruff",
+    "type_checker": "mypy",
+    "api_host": "127.0.0.1",
+    "api_port": 8000,
+    "api_base_url": "http://127.0.0.1:8000",
+    "api_key_header": "X-API-Key",
+    "local_dev_api_key_placeholder": "dev-task-manager-key-change-me",
+    "claude_code_mcp_server_name": "task_manager",
+    "mcp_prompt_runtime_names": [
+      "/mcp__task_manager__daily_plan",
+      "/mcp__task_manager__prioritize_tasks"
+    ],
+    "project_root": "task-manager-mcp"
+  },
+  "references": [
+    {
+      "name": "Claude Code MCP documentation",
+      "purpose": "Claude Code MCP server configuration, prompt command naming, resources, and installation scopes",
+      "url": "https://code.claude.com/docs/en/mcp"
+    },
+    {
+      "name": "MCP Python SDK",
+      "purpose": "FastMCP tools, resources, prompts, stdio execution, and Inspector development flow",
+      "url": "https://github.com/modelcontextprotocol/python-sdk"
+    },
+    {
+      "name": "MCP Inspector documentation",
+      "purpose": "Manual validation of MCP tools, resources, prompts, and edge cases",
+      "url": "https://modelcontextprotocol.io/docs/tools/inspector"
+    },
+    {
+      "name": "Claude Code skills documentation",
+      "purpose": "Project skill structure under .claude/skills/<skill>/SKILL.md and slash-command usage",
+      "url": "https://code.claude.com/docs/en/skills"
+    },
+    {
+      "name": "Claude Code sub-agents documentation",
+      "purpose": "Project sub-agent markdown files under .claude/agents/ with YAML frontmatter",
+      "url": "https://code.claude.com/docs/en/sub-agents"
+    },
+    {
+      "name": "Claude Code hooks documentation",
+      "purpose": "PreToolUse, PostToolUse, and FileChanged hook configuration and behavior",
+      "url": "https://code.claude.com/docs/en/hooks"
+    }
+  ],
+  "target_project_structure": [
+    "task-manager-mcp/README.md",
+    "task-manager-mcp/CLAUDE.md",
+    "task-manager-mcp/pyproject.toml",
+    "task-manager-mcp/.env.example",
+    "task-manager-mcp/.gitignore",
+    "task-manager-mcp/.mcp.json",
+    "task-manager-mcp/.claude/settings.json",
+    "task-manager-mcp/.claude/skills/git-commit/SKILL.md",
+    "task-manager-mcp/.claude/skills/add-test/SKILL.md",
+    "task-manager-mcp/.claude/agents/code-reviewer.md",
+    "task-manager-mcp/.claude/agents/test-writer.md",
+    "task-manager-mcp/api/__init__.py",
+    "task-manager-mcp/api/main.py",
+    "task-manager-mcp/api/config.py",
+    "task-manager-mcp/api/db.py",
+    "task-manager-mcp/api/models.py",
+    "task-manager-mcp/api/security.py",
+    "task-manager-mcp/mcp_server/__init__.py",
+    "task-manager-mcp/mcp_server/server.py",
+    "task-manager-mcp/mcp_server/client.py",
+    "task-manager-mcp/scripts/check_secrets.py",
+    "task-manager-mcp/scripts/post_edit_quality.py",
+    "task-manager-mcp/tests/test_api.py",
+    "task-manager-mcp/tests/test_mcp_contract.py"
+  ],
+  "data_contracts": {
+    "task_entity": {
+      "id": "integer, server-generated primary key",
+      "title": "string, required, 1..120 characters",
+      "description": "string, optional, max 2000 characters",
+      "status": "enum: todo | in-progress | completed",
+      "priority": "integer, required, 1..5 where 5 is highest",
+      "due_date": "date string in YYYY-MM-DD format, optional",
+      "created_at": "ISO 8601 datetime, server-generated",
+      "updated_at": "ISO 8601 datetime, server-generated"
+    },
+    "api_authentication": {
+      "required_header": "X-API-Key",
+      "invalid_key_status_code": 401,
+      "missing_key_status_code": 401
+    },
+    "api_endpoints": [
+      "GET /health",
+      "GET /tasks?status={optional}&due_date={optional}",
+      "GET /tasks/{task_id}",
+      "POST /tasks",
+      "PATCH /tasks/{task_id}",
+      "DELETE /tasks/{task_id}"
+    ],
+    "mcp_tools": [
+      "get_task(task_id: int)",
+      "get_all_tasks(status: str | null, due_date: str | null)",
+      "add_task(title: str, description: str | null, priority: int, due_date: str | null, status: str)",
+      "update_task(task_id: int, title: str | null, description: str | null, priority: int | null, due_date: str | null, status: str | null)",
+      "delete_task(task_id: int)"
+    ],
+    "mcp_resources": [
+      "tasks://all",
+      "tasks://completed",
+      "tasks://today",
+      "tasks://in-progress"
+    ],
+    "mcp_prompts": [
+      {
+        "name": "daily_plan",
+        "claude_code_command": "/mcp__task_manager__daily_plan",
+        "behavior": "Fetch today's tasks and ask Claude to return the top 3 highest-priority tasks with reasoning and a realistic order."
+      },
+      {
+        "name": "prioritize_tasks",
+        "claude_code_command": "/mcp__task_manager__prioritize_tasks",
+        "behavior": "Fetch open tasks and ask Claude to suggest an ordered priority list based on due date, priority, and status."
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step_number": 1,
+      "step_id": "initialize_repository_and_tooling",
+      "title": "Create repository skeleton and Python tooling",
+      "objective": "Create a clean project root with deterministic package management, formatting, linting, test, and type-check configuration.",
+      "implementation": {
+        "commands": [
+          ["uv", "init", "task-manager-mcp"],
+          ["uv", "add", "fastapi", "uvicorn[standard]", "sqlmodel", "pydantic-settings", "httpx", "python-dotenv", "mcp[cli]"],
+          ["uv", "add", "--dev", "pytest", "pytest-asyncio", "pytest-cov", "ruff", "black", "mypy"]
+        ],
+        "files_to_create_or_update": [
+          {
+            "path": ".gitignore",
+            "requirements": [
+              "Ignore .env, .venv, __pycache__, .pytest_cache, .ruff_cache, .mypy_cache, htmlcov, .coverage, task_manager.db."
+            ]
+          },
+          {
+            "path": ".env.example",
+            "requirements": [
+              "Define TASK_API_KEY=dev-task-manager-key-change-me",
+              "Define TASK_API_BASE_URL=http://127.0.0.1:8000",
+              "Define TASK_DB_URL=sqlite:///./task_manager.db"
+            ]
+          },
+          {
+            "path": "pyproject.toml",
+            "requirements": [
+              "Set Python requirement to >=3.11.",
+              "Configure black line-length=100.",
+              "Configure ruff line-length=100 and select E,F,I,B,UP rules.",
+              "Configure pytest testpaths=['tests'].",
+              "Configure mypy for api and mcp_server packages."
+            ]
+          },
+          {
+            "path": "api/__init__.py",
+            "requirements": ["Create empty package marker."]
+          },
+          {
+            "path": "mcp_server/__init__.py",
+            "requirements": ["Create empty package marker."]
+          },
+          {
+            "path": "tests/__init__.py",
+            "requirements": ["Create empty package marker if pytest import discovery requires it."]
+          }
+        ]
+      },
+      "verification": {
+        "commands": [
+          ["uv", "run", "python", "--version"],
+          ["uv", "run", "ruff", "check", "."],
+          ["uv", "run", "black", "--check", "."]
+        ],
+        "expected_results": [
+          "Python version is 3.11 or newer.",
+          "ruff exits with code 0.",
+          "black exits with code 0."
+        ]
+      },
+      "review_gate": {
+        "requires_approval_before_next_step": true,
+        "reviewer_checks": [
+          "Repository opens without dependency errors.",
+          "No real secrets exist in tracked files.",
+          "Project structure matches the target skeleton for this step."
+        ],
+        "approval_prompt": "Review Step 1 outputs. Approve before Step 2 starts."
+      }
+    },
+    {
+      "step_number": 2,
+      "step_id": "implement_backend_api",
+      "title": "Implement FastAPI CRUD backend with API key authentication",
+      "objective": "Create the Task Manager REST API with SQLite persistence, validation, and mandatory API key authentication.",
+      "implementation": {
+        "files_to_create_or_update": [
+          {
+            "path": "api/config.py",
+            "requirements": [
+              "Use pydantic-settings BaseSettings.",
+              "Read TASK_API_KEY from environment with no hard-coded production secret.",
+              "Read TASK_DB_URL from environment with default sqlite:///./task_manager.db.",
+              "Expose a cached get_settings() function."
+            ]
+          },
+          {
+            "path": "api/security.py",
+            "requirements": [
+              "Create FastAPI dependency require_api_key.",
+              "Read X-API-Key header.",
+              "Return HTTP 401 for missing or invalid key.",
+              "Use secrets.compare_digest for comparison."
+            ]
+          },
+          {
+            "path": "api/models.py",
+            "requirements": [
+              "Define TaskStatus enum with values todo, in-progress, completed.",
+              "Define SQLModel Task table with id, title, description, status, priority, due_date, created_at, updated_at.",
+              "Define TaskCreate schema with validation: title 1..120 chars, description max 2000 chars, priority 1..5, status default todo.",
+              "Define TaskUpdate schema with all editable fields optional and same validation constraints.",
+              "Define TaskRead schema returned by API."
+            ]
+          },
+          {
+            "path": "api/db.py",
+            "requirements": [
+              "Create SQLModel engine from TASK_DB_URL.",
+              "Create init_db() that creates tables.",
+              "Create get_session() FastAPI dependency."
+            ]
+          },
+          {
+            "path": "api/main.py",
+            "requirements": [
+              "Create FastAPI app titled Task Manager API.",
+              "Run init_db on startup/lifespan.",
+              "GET /health returns {'status':'ok'} and does not require API key.",
+              "All /tasks endpoints require require_api_key dependency.",
+              "GET /tasks supports optional status and due_date filters.",
+              "GET /tasks/{task_id} returns 404 if not found.",
+              "POST /tasks creates and returns TaskRead with HTTP 201.",
+              "PATCH /tasks/{task_id} updates only provided fields, updates updated_at, and returns TaskRead.",
+              "DELETE /tasks/{task_id} deletes and returns {'deleted': true, 'id': task_id}.",
+              "Use deterministic ordering for task lists: due_date nulls last, priority descending, id ascending."
+            ]
+          }
+        ],
+        "manual_test_commands": [
+          ["uv", "run", "uvicorn", "api.main:app", "--reload", "--host", "127.0.0.1", "--port", "8000"],
+          ["python", "-c", "import httpx; print(httpx.get('http://127.0.0.1:8000/health').json())"]
+        ],
+        "example_authenticated_request": {
+          "method": "POST",
+          "url": "http://127.0.0.1:8000/tasks",
+          "headers": {"X-API-Key": "dev-task-manager-key-change-me"},
+          "json": {
+            "title": "Finish MCP assignment",
+            "description": "Build backend, MCP server, Claude Code productivity tools, and docs.",
+            "priority": 5,
+            "due_date": "2026-05-01",
+            "status": "in-progress"
+          }
+        }
+      },
+      "verification": {
+        "commands": [
+          ["uv", "run", "ruff", "check", "api", "tests"],
+          ["uv", "run", "black", "--check", "api", "tests"],
+          ["uv", "run", "mypy", "api"]
+        ],
+        "expected_results": [
+          "GET /tasks without X-API-Key returns 401.",
+          "POST /tasks with invalid priority returns 422.",
+          "POST /tasks with valid API key returns 201 and persisted task.",
+          "GET /tasks/{id} returns the created task.",
+          "PATCH /tasks/{id} updates only supplied fields.",
+          "DELETE /tasks/{id} returns deleted=true."
+        ]
+      },
+      "review_gate": {
+        "requires_approval_before_next_step": true,
+        "reviewer_checks": [
+          "API authentication works for all /tasks endpoints.",
+          "Validation errors are clear and predictable.",
+          "SQLite database is created locally and not committed."
+        ],
+        "approval_prompt": "Review Step 2 backend API behavior. Approve before Step 3 starts."
+      }
+    },
+    {
+      "step_number": 3,
+      "step_id": "add_backend_tests",
+      "title": "Add automated tests for backend API",
+      "objective": "Create repeatable tests proving CRUD, auth, validation, and filtering behavior.",
+      "implementation": {
+        "files_to_create_or_update": [
+          {
+            "path": "tests/test_api.py",
+            "requirements": [
+              "Use pytest and FastAPI TestClient.",
+              "Override database to use a temporary SQLite database per test session or per test.",
+              "Set TASK_API_KEY to test-key in test environment.",
+              "Test GET /health returns ok without API key.",
+              "Test missing API key returns 401 on /tasks.",
+              "Test invalid API key returns 401 on /tasks.",
+              "Test create/list/get/update/delete happy path.",
+              "Test validation for empty title, title longer than 120 chars, priority outside 1..5, invalid status.",
+              "Test status filter returns only matching tasks.",
+              "Test due_date filter returns only matching tasks."
+            ]
+          }
+        ]
+      },
+      "verification": {
+        "commands": [
+          ["uv", "run", "pytest", "tests/test_api.py", "-q"],
+          ["uv", "run", "pytest", "--cov=api", "--cov-report=term-missing"]
+        ],
+        "expected_results": [
+          "All backend tests pass.",
+          "Coverage report shows API business logic is covered."
+        ]
+      },
+      "review_gate": {
+        "requires_approval_before_next_step": true,
+        "reviewer_checks": [
+          "Tests fail if API key auth is removed.",
+          "Tests fail if validation rules are weakened.",
+          "Tests can run from a clean checkout."
+        ],
+        "approval_prompt": "Review Step 3 test coverage. Approve before Step 4 starts."
+      }
+    },
+    {
+      "step_number": 4,
+      "step_id": "implement_mcp_server",
+      "title": "Implement MCP server with tools, resources, and prompts",
+      "objective": "Expose the backend API to Claude Code through a Python FastMCP server.",
+      "implementation": {
+        "files_to_create_or_update": [
+          {
+            "path": "mcp_server/client.py",
+            "requirements": [
+              "Use httpx AsyncClient.",
+              "Read TASK_API_BASE_URL and TASK_API_KEY from environment.",
+              "Send X-API-Key header on every API request.",
+              "Raise clear RuntimeError messages for non-2xx API responses.",
+              "Expose async functions: get_task, get_all_tasks, add_task, update_task, delete_task."
+            ]
+          },
+          {
+            "path": "mcp_server/server.py",
+            "requirements": [
+              "Create FastMCP server named Task Manager.",
+              "Register tools get_task, get_all_tasks, add_task, update_task, delete_task.",
+              "Each tool must have typed arguments, docstring, and structured JSON-compatible return value.",
+              "Register resource tasks://all that returns JSON list of all tasks.",
+              "Register resource tasks://completed that returns JSON list filtered by status=completed.",
+              "Register resource tasks://today that returns JSON list filtered by due_date equal to today's local date.",
+              "Register resource tasks://in-progress that returns JSON list filtered by status=in-progress.",
+              "Register prompt daily_plan that instructs Claude to use task data and return top 3 highest-priority tasks for today.",
+              "Register prompt prioritize_tasks that instructs Claude to review open tasks and suggest a prioritized order.",
+              "Call mcp.run() in main for stdio transport."
+            ]
+          },
+          {
+            "path": "tests/test_mcp_contract.py",
+            "requirements": [
+              "Test that server module imports without side effects other than FastMCP object creation.",
+              "Test MCP client sends X-API-Key header using httpx mock or monkeypatch.",
+              "Test daily_plan and prioritize_tasks prompt functions return deterministic instruction strings containing required words: top 3, priority, due date, status."
+            ]
+          }
+        ],
+        "local_run_requirements": [
+          "Start backend API first on http://127.0.0.1:8000.",
+          "Set TASK_API_KEY=dev-task-manager-key-change-me.",
+          "Set TASK_API_BASE_URL=http://127.0.0.1:8000.",
+          "Run MCP server with: uv run python -m mcp_server.server."
+        ]
+      },
+      "verification": {
+        "commands": [
+          ["uv", "run", "ruff", "check", "mcp_server", "tests"],
+          ["uv", "run", "black", "--check", "mcp_server", "tests"],
+          ["uv", "run", "mypy", "mcp_server"],
+          ["uv", "run", "pytest", "tests/test_mcp_contract.py", "-q"]
+        ],
+        "expected_results": [
+          "MCP server starts via uv run python -m mcp_server.server when backend is available.",
+          "MCP tools call backend API, not local storage directly.",
+          "MCP resources return JSON strings or structured JSON-compatible content.",
+          "MCP prompts are discoverable as daily_plan and prioritize_tasks."
+        ]
+      },
+      "review_gate": {
+        "requires_approval_before_next_step": true,
+        "reviewer_checks": [
+          "Tool names exactly match assignment requirement.",
+          "At least one resource and one prompt work before continuing.",
+          "MCP layer contains no business storage logic. It delegates to API."
+        ],
+        "approval_prompt": "Review Step 4 MCP server behavior. Approve before Step 5 starts."
+      }
+    },
+    {
+      "step_number": 5,
+      "step_id": "validate_with_mcp_inspector",
+      "title": "Validate all MCP capabilities with MCP Inspector",
+      "objective": "Confirm the MCP server connects and tools, resources, and prompts work through the Inspector before Claude Code integration.",
+      "implementation": {
+        "preconditions": [
+          "Backend API is running on http://127.0.0.1:8000.",
+          "At least four seed tasks exist: one completed, one due today, one in-progress, and one open high priority task."
+        ],
+        "commands": [
+          ["npx", "-y", "@modelcontextprotocol/inspector", "uv", "run", "python", "-m", "mcp_server.server"]
+        ],
+        "inspector_manual_checks": [
+          "Connect to the stdio MCP server command.",
+          "Open Tools tab and run get_all_tasks.",
+          "Run add_task with a valid task payload.",
+          "Run get_task for the created id.",
+          "Run update_task to change status or priority.",
+          "Run delete_task for a disposable task.",
+          "Open Resources tab and read tasks://all.",
+          "Read tasks://completed.",
+          "Read tasks://today.",
+          "Read tasks://in-progress.",
+          "Open Prompts tab and execute daily_plan.",
+          "Execute prioritize_tasks."
+        ],
+        "evidence_to_capture": [
+          "Screenshot or text notes showing Tools tab success for all five tools.",
+          "Screenshot or text notes showing Resources tab success for all four resources.",
+          "Screenshot or text notes showing Prompts tab success for both prompts."
+        ]
+      },
+      "verification": {
+        "expected_results": [
+          "Inspector connects without protocol errors.",
+          "All five tools return expected structured output or clear errors for invalid input.",
+          "All four resources return data.",
+          "Both prompts return instruction content."
+        ]
+      },
+      "review_gate": {
+        "requires_approval_before_next_step": true,
+        "reviewer_checks": [
+          "Definition of Done item 'All tools validated via MCP Inspector' is satisfied.",
+          "Resource and prompt validation evidence is saved in notes or README draft.",
+          "No hidden dependency on local task data outside the backend API."
+        ],
+        "approval_prompt": "Review Step 5 MCP Inspector evidence. Approve before Step 6 starts."
+      }
+    },
+    {
+      "step_number": 6,
+      "step_id": "connect_to_claude_code",
+      "title": "Connect MCP server to Claude Code",
+      "objective": "Make the MCP server available inside Claude Code with project-level configuration.",
+      "implementation": {
+        "files_to_create_or_update": [
+          {
+            "path": ".mcp.json",
+            "requirements": [
+              "Create project-scoped MCP config with server name task_manager.",
+              "Use type stdio.",
+              "Use command uv.",
+              "Use args ['run', 'python', '-m', 'mcp_server.server'].",
+              "Use env TASK_API_BASE_URL=${TASK_API_BASE_URL:-http://127.0.0.1:8000}.",
+              "Use env TASK_API_KEY=${TASK_API_KEY:-dev-task-manager-key-change-me} for local assignment only; document that real projects must avoid committing secrets."
+            ]
+          }
+        ],
+        "commands": [
+          ["claude", "mcp", "list"],
+          ["claude", "mcp", "get", "task_manager"]
+        ],
+        "claude_code_manual_checks": [
+          "Start Claude Code from project root.",
+          "Run /mcp and confirm task_manager is connected.",
+          "Type / and confirm MCP prompts appear as /mcp__task_manager__daily_plan and /mcp__task_manager__prioritize_tasks.",
+          "Ask Claude Code to call get_all_tasks through the task_manager MCP server.",
+          "Run /mcp__task_manager__daily_plan after seed tasks exist."
+        ]
+      },
+      "verification": {
+        "expected_results": [
+          "claude mcp list shows task_manager or project config is accepted after approval.",
+          "Claude Code /mcp shows connected status.",
+          "Claude Code can use MCP tools without manually copying API data into chat.",
+          "MCP prompt command naming matches /mcp__task_manager__promptname."
+        ]
+      },
+      "review_gate": {
+        "requires_approval_before_next_step": true,
+        "reviewer_checks": [
+          "Claude Code can see the MCP server.",
+          "Claude Code can execute at least one tool.",
+          "Claude Code can execute at least one MCP prompt."
+        ],
+        "approval_prompt": "Review Step 6 Claude Code connection. Approve before Step 7 starts."
+      }
+    },
+    {
+      "step_number": 7,
+      "step_id": "add_claude_project_documentation",
+      "title": "Create CLAUDE.md with project workflow",
+      "objective": "Document project structure and Claude Code development workflow for repeatable AI-assisted work.",
+      "implementation": {
+        "files_to_create_or_update": [
+          {
+            "path": "CLAUDE.md",
+            "requirements": [
+              "Document system architecture: Claude Code -> MCP server -> FastAPI API -> SQLite.",
+              "Document exact project structure.",
+              "Document run commands for API, tests, lint, format, type checking, MCP Inspector, Claude Code MCP connection.",
+              "Document API key rules: never expose real key, use .env, header X-API-Key.",
+              "Document coding standards: typed functions, no direct DB access from MCP, clear errors, validation tests.",
+              "Document review workflow: one step at a time, stop after each approval gate.",
+              "Document how and when to use skills /git-commit and /add-test.",
+              "Document how and when to delegate to sub-agents code-reviewer and test-writer.",
+              "Document hook behavior: pre-edit secret scan, post-edit quality checks."
+            ]
+          }
+        ]
+      },
+      "verification": {
+        "commands": [
+          ["python", "-c", "from pathlib import Path; p=Path('CLAUDE.md'); assert p.exists() and 'MCP' in p.read_text() and 'X-API-Key' in p.read_text()"]
+        ],
+        "expected_results": [
+          "CLAUDE.md exists and contains architecture, workflow, commands, and security rules."
+        ]
+      },
+      "review_gate": {
+        "requires_approval_before_next_step": true,
+        "reviewer_checks": [
+          "A new developer or AI agent could continue from CLAUDE.md without extra context.",
+          "CLAUDE.md explicitly says MCP must call API, not DB directly.",
+          "CLAUDE.md contains approval-gate workflow."
+        ],
+        "approval_prompt": "Review Step 7 CLAUDE.md. Approve before Step 8 starts."
+      }
+    },
+    {
+      "step_number": 8,
+      "step_id": "add_claude_skills",
+      "title": "Add project skills /git-commit and /add-test",
+      "objective": "Provide reusable Claude Code skills for commit message generation and test skeleton creation.",
+      "implementation": {
+        "files_to_create_or_update": [
+          {
+            "path": ".claude/skills/git-commit/SKILL.md",
+            "requirements": [
+              "YAML frontmatter description: Generate a concise conventional commit message from current git diff.",
+              "Instructions require Claude to inspect git diff, summarize behavior changes, choose one type from feat/fix/test/docs/refactor/chore, and output only commit title plus optional body.",
+              "Instructions forbid adding secrets or unrelated changes to commit message.",
+              "Expected invocation: /git-commit."
+            ]
+          },
+          {
+            "path": ".claude/skills/add-test/SKILL.md",
+            "requirements": [
+              "YAML frontmatter description: Create pytest test skeletons for changed API or MCP functionality.",
+              "Instructions require Claude to identify target module, create or update tests under tests/, include happy path, auth/validation path, and error path where applicable.",
+              "Instructions require tests to be runnable with uv run pytest.",
+              "Expected invocation: /add-test."
+            ]
+          }
+        ],
+        "manual_checks": [
+          "Restart Claude Code if .claude/skills did not exist before session start.",
+          "Type / and confirm /git-commit and /add-test appear.",
+          "Invoke /git-commit after a harmless documentation edit and verify deterministic output.",
+          "Invoke /add-test for api/main.py and verify it proposes or creates pytest skeletons."
+        ]
+      },
+      "verification": {
+        "expected_results": [
+          "At least one skill works; assignment requires at least one, this implementation provides two.",
+          "Skills are project-scoped and committed under .claude/skills."
+        ]
+      },
+      "review_gate": {
+        "requires_approval_before_next_step": true,
+        "reviewer_checks": [
+          "Both skills appear as slash commands in Claude Code.",
+          "At least /git-commit or /add-test was executed successfully.",
+          "Skill instructions are specific enough for repeatable results."
+        ],
+        "approval_prompt": "Review Step 8 skills. Approve before Step 9 starts."
+      }
+    },
+    {
+      "step_number": 9,
+      "step_id": "add_claude_subagents",
+      "title": "Add project sub-agents code-reviewer and test-writer",
+      "objective": "Create specialized Claude Code sub-agents for code quality review and unit test creation.",
+      "implementation": {
+        "files_to_create_or_update": [
+          {
+            "path": ".claude/agents/code-reviewer.md",
+            "requirements": [
+              "Use YAML frontmatter with name: code-reviewer.",
+              "Description: Reviews FastAPI, MCP, security, validation, and test quality after code changes.",
+              "Tools: Read, Glob, Grep, Bash.",
+              "Model: sonnet.",
+              "Body instructions: check API auth, input validation, MCP delegation to API, no secrets, error handling, tests, README/CLAUDE.md consistency.",
+              "Output format: findings grouped as critical, should-fix, nice-to-have, with file paths and exact recommendations."
+            ]
+          },
+          {
+            "path": ".claude/agents/test-writer.md",
+            "requirements": [
+              "Use YAML frontmatter with name: test-writer.",
+              "Description: Creates or improves pytest tests for backend API and MCP contracts.",
+              "Tools: Read, Glob, Grep, Bash, Edit, Write.",
+              "Model: sonnet.",
+              "Body instructions: add focused tests only, keep fixtures deterministic, avoid external network dependency, run pytest after changes."
+            ]
+          }
+        ],
+        "manual_checks": [
+          "Restart Claude Code or use /agents to reload agents if needed.",
+          "Run /agents and confirm code-reviewer and test-writer are listed.",
+          "Ask Claude Code: Use code-reviewer to review the current implementation.",
+          "Ask Claude Code: Use test-writer to add missing tests for MCP prompt behavior."
+        ]
+      },
+      "verification": {
+        "expected_results": [
+          "At least one sub-agent works; assignment requires at least one, this implementation provides two.",
+          "code-reviewer can inspect but not edit if only read-only tools are configured.",
+          "test-writer can edit tests and run pytest."
+        ]
+      },
+      "review_gate": {
+        "requires_approval_before_next_step": true,
+        "reviewer_checks": [
+          "Both sub-agents appear in /agents.",
+          "At least code-reviewer was successfully invoked.",
+          "Sub-agent output is actionable and constrained to its role."
+        ],
+        "approval_prompt": "Review Step 9 sub-agents. Approve before Step 10 starts."
+      }
+    },
+    {
+      "step_number": 10,
+      "step_id": "add_hooks",
+      "title": "Add pre-edit and post-edit Claude Code hooks",
+      "objective": "Create deterministic hooks that check for secrets before edits and run quality checks after edits.",
+      "implementation": {
+        "files_to_create_or_update": [
+          {
+            "path": "scripts/check_secrets.py",
+            "requirements": [
+              "Read Claude Code hook JSON from stdin.",
+              "Inspect tool_input.file_path and tool_input.content/new_string if present.",
+              "Block when content contains likely real secrets: API keys, bearer tokens, private key headers, AWS secret key patterns, TASK_API_KEY assigned to a non-placeholder value.",
+              "Allow .env.example placeholder values.",
+              "Return JSON decision block with decision='block' and reason when secret is detected.",
+              "Return empty JSON or allow decision when clean.",
+              "Exit code 0 for handled clean/block decisions; nonzero only for script failure."
+            ]
+          },
+          {
+            "path": "scripts/post_edit_quality.py",
+            "requirements": [
+              "Read Claude Code hook JSON from stdin.",
+              "Run only when edited file extension is .py, .md, .toml, .json, or hook event lacks a file path.",
+              "For Python files run: uv run ruff check ., uv run black --check ., uv run pytest -q.",
+              "For non-Python project docs/config run: uv run ruff check . only if Python files exist, and skip pytest unless source files changed.",
+              "Print concise pass/fail output.",
+              "Do not auto-fix in hook; report failures so the agent can fix explicitly."
+            ]
+          },
+          {
+            "path": ".claude/settings.json",
+            "requirements": [
+              "Configure PreToolUse matcher Edit|Write|MultiEdit to run python scripts/check_secrets.py.",
+              "Configure PostToolUse matcher Edit|Write|MultiEdit to run python scripts/post_edit_quality.py.",
+              "Optionally configure FileChanged matcher .env|.env.example to run check_secrets.py in audit mode."
+            ]
+          }
+        ],
+        "manual_checks": [
+          "Open Claude Code and run /hooks.",
+          "Confirm PreToolUse and PostToolUse hooks are listed.",
+          "Attempt to write a disposable file containing TASK_API_KEY=real-looking-secret-123456 and verify pre-edit hook blocks it.",
+          "Edit a harmless Python file and verify post-edit hook runs ruff, black --check, and pytest."
+        ]
+      },
+      "verification": {
+        "commands": [
+          ["python", "scripts/check_secrets.py"],
+          ["python", "scripts/post_edit_quality.py"]
+        ],
+        "expected_results": [
+          "Scripts handle empty stdin or minimal JSON gracefully.",
+          "Pre-edit hook blocks obvious secret content.",
+          "Post-edit hook triggers quality checks after file changes."
+        ]
+      },
+      "review_gate": {
+        "requires_approval_before_next_step": true,
+        "reviewer_checks": [
+          "Pre-edit hook is present and triggers on edit/write operations.",
+          "Post-edit hook is present and triggers after edit/write operations.",
+          "Hooks do not leak secret content in logs."
+        ],
+        "approval_prompt": "Review Step 10 hooks. Approve before Step 11 starts."
+      }
+    },
+    {
+      "step_number": 11,
+      "step_id": "write_readme",
+      "title": "Create README.md installation, setup, and usage guide",
+      "objective": "Document how another user can install, run, validate, and use the complete system.",
+      "implementation": {
+        "files_to_create_or_update": [
+          {
+            "path": "README.md",
+            "requirements": [
+              "Explain architecture with text diagram.",
+              "List prerequisites: Python 3.11+, uv, Node.js/npm for MCP Inspector, Claude Code.",
+              "Explain environment setup from .env.example to .env.",
+              "Explain starting backend API.",
+              "Explain seeding tasks using curl/httpx examples.",
+              "Explain running tests, lint, format check, type check.",
+              "Explain launching MCP Inspector and validating tools/resources/prompts.",
+              "Explain connecting to Claude Code via .mcp.json or claude mcp add command.",
+              "List MCP tools, resources, and prompt commands.",
+              "Explain skills and sub-agents usage.",
+              "Explain hooks behavior and how to test them.",
+              "Troubleshooting section for 401 API errors, API not running, MCP connection failure, missing uv/npm, hook failures.",
+              "Definition of Done checklist matching assignment requirements."
+            ]
+          }
+        ]
+      },
+      "verification": {
+        "commands": [
+          ["python", "-c", "from pathlib import Path; t=Path('README.md').read_text(); required=['CRUD','API Key','MCP Inspector','Claude Code','skills','sub-agents','hooks']; assert all(x in t for x in required)"]
+        ],
+        "expected_results": [
+          "README contains all setup and usage sections.",
+          "README has a Definition of Done checklist."
+        ]
+      },
+      "review_gate": {
+        "requires_approval_before_next_step": true,
+        "reviewer_checks": [
+          "README is enough to run the project from scratch.",
+          "README explains all assignment requirements.",
+          "README does not include real secrets."
+        ],
+        "approval_prompt": "Review Step 11 README.md. Approve before Step 12 starts."
+      }
+    },
+    {
+      "step_number": 12,
+      "step_id": "final_end_to_end_acceptance",
+      "title": "Run final end-to-end acceptance checklist",
+      "objective": "Verify the complete system satisfies the assignment Definition of Done.",
+      "implementation": {
+        "commands": [
+          ["uv", "run", "ruff", "check", "."],
+          ["uv", "run", "black", "--check", "."],
+          ["uv", "run", "mypy", "api", "mcp_server"],
+          ["uv", "run", "pytest", "-q"]
+        ],
+        "manual_acceptance_checklist": [
+          "Backend API has CRUD operations.",
+          "Backend API requires X-API-Key for all /tasks requests.",
+          "Backend API validates title, priority, status, and due_date.",
+          "MCP server connects to API, not directly to DB.",
+          "MCP server exposes all five required tools.",
+          "MCP server exposes at least one working resource; target implementation exposes four.",
+          "MCP server exposes at least one working prompt; target implementation exposes two.",
+          "MCP Inspector validates tools, resources, and prompts.",
+          "Claude Code connects to MCP server.",
+          "CLAUDE.md documents project structure and workflow.",
+          "At least one skill works; target implementation has /git-commit and /add-test.",
+          "At least one sub-agent works; target implementation has code-reviewer and test-writer.",
+          "Pre-edit hook triggers and blocks likely secrets.",
+          "Post-edit hook triggers and runs quality checks/tests.",
+          "README.md explains installation, setup, and usage."
+        ],
+        "final_deliverables": [
+          "Working source repository task-manager-mcp.",
+          "README.md with setup/use instructions.",
+          "CLAUDE.md with AI workflow instructions.",
+          "Evidence notes or screenshots from MCP Inspector validation.",
+          "Evidence notes showing Claude Code MCP connection and at least one prompt execution.",
+          "Evidence notes showing skill, sub-agent, pre-edit hook, and post-edit hook execution."
+        ]
+      },
+      "verification": {
+        "expected_results": [
+          "All automated checks pass.",
+          "All manual acceptance checklist items are confirmed.",
+          "No real API key is committed.",
+          "Reviewer can approve final submission."
+        ]
+      },
+      "review_gate": {
+        "requires_approval_before_next_step": false,
+        "reviewer_checks": [
+          "Every assignment Definition of Done item is either complete or explicitly documented as incomplete with reason.",
+          "Final repository can be cloned and run by another person using README only."
+        ],
+        "approval_prompt": "Review Step 12 final acceptance. Approve the completed assignment."
+      }
+    }
+  ],
+  "seed_data": [
+    {
+      "title": "Finish MCP assignment",
+      "description": "Complete backend, MCP server, Claude Code integration, skills, sub-agents, hooks, and docs.",
+      "priority": 5,
+      "due_date": "2026-05-01",
+      "status": "in-progress"
+    },
+    {
+      "title": "Validate tools in MCP Inspector",
+      "description": "Run all five tools plus resources and prompts in MCP Inspector.",
+      "priority": 5,
+      "due_date": "2026-05-01",
+      "status": "todo"
+    },
+    {
+      "title": "Write README",
+      "description": "Document installation, setup, usage, and troubleshooting.",
+      "priority": 4,
+      "due_date": "2026-05-02",
+      "status": "todo"
+    },
+    {
+      "title": "Create initial project skeleton",
+      "description": "Initialize repository, dependencies, and folders.",
+      "priority": 3,
+      "due_date": "2026-04-30",
+      "status": "completed"
+    }
+  ],
+  "definition_of_done_mapping": [
+    {
+      "requirement": "All tools validated via MCP Inspector; server connects to Claude Code",
+      "covered_by_steps": [5, 6]
+    },
+    {
+      "requirement": "At least one MCP resource and one MCP prompt defined and working",
+      "covered_by_steps": [4, 5]
+    },
+    {
+      "requirement": "CLAUDE.md documents project structure and development workflow",
+      "covered_by_steps": [7]
+    },
+    {
+      "requirement": "At least one skill working",
+      "covered_by_steps": [8]
+    },
+    {
+      "requirement": "At least one sub-agent working",
+      "covered_by_steps": [9]
+    },
+    {
+      "requirement": "Pre-edit and post-edit hooks in place and triggering on file changes",
+      "covered_by_steps": [10]
+    },
+    {
+      "requirement": "README.md explains installation, setup, and usage",
+      "covered_by_steps": [11]
+    },
+    {
+      "requirement": "Backend API with CRUD, API key auth, validation",
+      "covered_by_steps": [2, 3]
+    },
+    {
+      "requirement": "MCP server connects to API and defines tools, resources, prompts",
+      "covered_by_steps": [4, 5]
+    }
+  ],
+  "risk_controls": [
+    {
+      "risk": "API key accidentally committed",
+      "control": "Use .env.example placeholders, .env ignored, pre-edit hook secret scanner, README warning."
+    },
+    {
+      "risk": "MCP server bypasses API and reads DB directly",
+      "control": "CLAUDE.md rule, code-reviewer checklist, MCP client module only calls HTTP API."
+    },
+    {
+      "risk": "Claude Code cannot discover MCP prompts as /daily-plan literal names",
+      "control": "Use MCP prompt names daily_plan/prioritize_tasks and document Claude Code normalized command names /mcp__task_manager__daily_plan and /mcp__task_manager__prioritize_tasks."
+    },
+    {
+      "risk": "Hooks are too slow or disruptive",
+      "control": "Post-edit hook runs checks only after Edit/Write/MultiEdit and reports failures without auto-fixing."
+    },
+    {
+      "risk": "Inspector validation skipped",
+      "control": "Step 5 has mandatory evidence capture and approval gate before Claude Code connection."
+    }
+  ]
+}

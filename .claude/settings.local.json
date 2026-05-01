@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Set-Location \"d:\\\\sdlc-course\\\\sdlc-course\\\\task-manager-mcp\"; dotnet test api.Tests 2>&1 | Select-String -Pattern \"passed|failed|error|Total\" | ForEach-Object { $_.Line })"
+    ]
+  }
+}

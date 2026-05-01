@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "task_manager": {
+      "type": "stdio",
+      "command": "C:\\Users\\l.zahorskaya\\.local\\bin\\uv.exe",
+      "args": ["run", "python", "-m", "mcp_server.server"],
+      "env": {
+        "TASK_API_KEY": "dev-task-manager-key-change-me",
+        "TASK_API_BASE_URL": "http://127.0.0.1:8000"
+      }
+    }
+  }
+}
